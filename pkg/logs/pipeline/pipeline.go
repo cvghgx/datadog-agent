@@ -111,7 +111,14 @@ func (p *Pipeline) Flush(ctx context.Context) {
 
 	if p.serverless {
 		// Wait for the logs sender to finish sending payloads to all destinations before allowing the flush to finish
-		p.flushWg.Wait()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				p.flushWg.Wait()
+			}
+		}
 	}
 }
 
