@@ -33,11 +33,18 @@ type linuxTestSuite struct {
 	e2e.BaseSuite[environments.Kubernetes]
 }
 
-//go:embed collector.yml
-var collectorConfig string
-
 func TestOTel(t *testing.T) {
-	e2e.Run(t, &linuxTestSuite{}, e2e.WithProvisioner(awskubernetes.KindProvisioner(awskubernetes.WithAgentOptions(kubernetesagentparams.WithoutDualShipping(), kubernetesagentparams.WithOTelAgent(), kubernetesagentparams.WithOTelConfig(collectorConfig)))))
+	values := `
+datadog:
+  otlp:
+    receiver:
+      protocols:
+        grpc:
+          enabled: true
+    logs:
+      enabled: true
+`
+	e2e.Run(t, &linuxTestSuite{}, e2e.WithProvisioner(awskubernetes.KindProvisioner(awskubernetes.WithAgentOptions(kubernetesagentparams.WithoutDualShipping(), kubernetesagentparams.WithHelmValues(values)))))
 }
 
 func (s *linuxTestSuite) TestOTelAgentInstalled() {
