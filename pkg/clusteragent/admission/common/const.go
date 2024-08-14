@@ -8,11 +8,21 @@
 // Package common defines constants and types used by the Admission Controller.
 package common
 
+// WebhookType is the type of the webhook.
+type WebhookType int
+
+const (
+	// ValidatingWebhook is type for Validating Webhooks.
+	ValidatingWebhook WebhookType = iota
+	// MutatingWebhook is type for Mutating Webhooks.
+	MutatingWebhook
+)
+
 const (
 	// EnabledLabelKey pod label to disable/enable mutations at the pod level.
 	EnabledLabelKey = "admission.datadoghq.com/enabled"
 
-	// InjectionModeLabelKey pod label to chose the config injection at the pod level.
+	// InjectionModeLabelKey pod label to choose the config injection at the pod level.
 	InjectionModeLabelKey = "admission.datadoghq.com/config.mode"
 
 	// LibVersionAnnotKeyFormat is the format of the library version annotation

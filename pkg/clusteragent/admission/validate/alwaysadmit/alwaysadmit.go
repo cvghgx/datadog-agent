@@ -1,33 +1,32 @@
 // Unless explicitly stated otherwise all files in this repository are licensed
 // under the Apache License Version 2.0.
 // This product includes software developed at Datadog (https://www.datadoghq.com/).
-// Copyright 2024-present Datadog, Inc.
+// Copyright 2016-present Datadog, Inc.
 
 //go:build kubeapiserver
 
-// Package autoscaling implements the webhook that vertically scales applications
-package autoscaling
+// Package alwaysadmit is a validation webhook that allows all pods into the cluster.
+// Its behavior is the same as if there were no validation at all.
+package alwaysadmit
 
 import (
 	"github.com/DataDog/datadog-agent/cmd/cluster-agent/admission"
 	"github.com/DataDog/datadog-agent/pkg/clusteragent/admission/common"
-	mutatecommon "github.com/DataDog/datadog-agent/pkg/clusteragent/admission/mutate/common"
-	"github.com/DataDog/datadog-agent/pkg/clusteragent/autoscaling/workload"
-	"github.com/DataDog/datadog-agent/pkg/config"
-
+	validatecommon "github.com/DataDog/datadog-agent/pkg/clusteragent/admission/validate/common"
 	admiv1 "k8s.io/api/admission/v1"
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
+
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
-	webhookName     = "autoscaling"
-	webhookEndpoint = "/autoscaling"
+	webhookName     = "always_admit"
+	webhookEndpoint = "/always-admit"
 )
 
-// Webhook implements the MutatingWebhook interface
+// Webhook is a validation webhook that allows all pods into the cluster.
 type Webhook struct {
 	name        string
 	webhookType common.WebhookType
@@ -35,19 +34,17 @@ type Webhook struct {
 	endpoint    string
 	resources   []string
 	operations  []admissionregistrationv1.OperationType
-	patcher     workload.PodPatcher
 }
 
-// NewWebhook returns a new Webhook
-func NewWebhook(patcher workload.PodPatcher) *Webhook {
+// NewWebhook returns a new webhook
+func NewWebhook() *Webhook {
 	return &Webhook{
 		name:        webhookName,
-		webhookType: common.MutatingWebhook,
-		isEnabled:   config.Datadog().GetBool("autoscaling.workload.enabled"),
+		webhookType: common.ValidatingWebhook,
+		isEnabled:   true,
 		endpoint:    webhookEndpoint,
 		resources:   []string{"pods"},
 		operations:  []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
-		patcher:     patcher,
 	}
 }
 
@@ -85,20 +82,18 @@ func (w *Webhook) Operations() []admissionregistrationv1.OperationType {
 
 // LabelSelectors returns the label selectors that specify when the webhook
 // should be invoked
-func (w *Webhook) LabelSelectors(_ bool) (namespaceSelector *metav1.LabelSelector, objectSelector *metav1.LabelSelector) {
-	// Autoscaling does not work like others. Targets are selected through existence of DPA objects.
-	// Hence, we need the equivalent of mutate unlabelled for this webhook.
-	return nil, nil
+func (w *Webhook) LabelSelectors(useNamespaceSelector bool) (namespaceSelector *metav1.LabelSelector, objectSelector *metav1.LabelSelector) {
+	return common.DefaultLabelSelectors(useNamespaceSelector)
 }
 
-// WebhookFunc returns the function that mutates the resources
+// WebhookFunc returns the function that validate the resources
 func (w *Webhook) WebhookFunc() func(request *admission.Request) *admiv1.AdmissionResponse {
 	return func(request *admission.Request) *admiv1.AdmissionResponse {
-		return common.MutationResponse(mutatecommon.Mutate(request.Raw, request.Namespace, w.Name(), w.updateResources, request.DynamicClient))
+		return common.ValidationResponse(validatecommon.Validate(request.Raw, request.Namespace, w.Name(), w.alwaysAdmit, request.DynamicClient))
 	}
 }
 
-// updateResources finds the owner of a pod, calls the recommender to retrieve the recommended CPU and Memory requests
-func (w *Webhook) updateResources(pod *corev1.Pod, _ string, _ dynamic.Interface) (bool, error) {
-	return w.patcher.ApplyRecommendations(pod)
+// alwaysAdmit is a function that always admits the pod.
+func (w *Webhook) alwaysAdmit(_ *corev1.Pod, _ string, _ dynamic.Interface) (bool, error) {
+	return true, nil
 }

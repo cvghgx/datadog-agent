@@ -61,9 +61,10 @@ var getWebhookStatus = func(string, kubernetes.Interface) (map[string]interface{
 	return nil, fmt.Errorf("admission controller not started")
 }
 
-func getWebhookStatusV1beta1(name string, apiCl kubernetes.Interface) (map[string]interface{}, error) {
+func getWebhookStatusV1(name string, apiCl kubernetes.Interface) (map[string]interface{}, error) {
+	// TODO (wassim): Add validating webhooks in status
 	webhookStatus := make(map[string]interface{})
-	webhook, err := apiCl.AdmissionregistrationV1beta1().MutatingWebhookConfigurations().Get(context.TODO(), name, metav1.GetOptions{})
+	webhook, err := apiCl.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
 		return webhookStatus, err
 	}
@@ -98,9 +99,9 @@ func getWebhookStatusV1beta1(name string, apiCl kubernetes.Interface) (map[strin
 	return webhookStatus, nil
 }
 
-func getWebhookStatusV1(name string, apiCl kubernetes.Interface) (map[string]interface{}, error) {
+func getWebhookStatusV1beta1(name string, apiCl kubernetes.Interface) (map[string]interface{}, error) {
 	webhookStatus := make(map[string]interface{})
-	webhook, err := apiCl.AdmissionregistrationV1().MutatingWebhookConfigurations().Get(context.TODO(), name, metav1.GetOptions{})
+	webhook, err := apiCl.AdmissionregistrationV1beta1().MutatingWebhookConfigurations().Get(context.TODO(), name, metav1.GetOptions{})
 	if err != nil {
 		return webhookStatus, err
 	}

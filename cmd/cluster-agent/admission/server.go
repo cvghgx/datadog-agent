@@ -18,18 +18,17 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/cihub/seelog"
 	authenticationv1 "k8s.io/api/authentication/v1"
 
+	admicommon "github.com/DataDog/datadog-agent/pkg/clusteragent/admission/common"
 	"github.com/DataDog/datadog-agent/pkg/clusteragent/admission/metrics"
 	"github.com/DataDog/datadog-agent/pkg/config"
 	"github.com/DataDog/datadog-agent/pkg/util/kubernetes/apiserver/common"
 	"github.com/DataDog/datadog-agent/pkg/util/kubernetes/certificate"
 	"github.com/DataDog/datadog-agent/pkg/util/log"
-	"github.com/cihub/seelog"
-
 	admiv1 "k8s.io/api/admission/v1"
 	admiv1beta1 "k8s.io/api/admission/v1beta1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/dynamic"
@@ -38,8 +37,8 @@ import (
 
 const jsonContentType = "application/json"
 
-// MutateRequest contains the information of a mutation request
-type MutateRequest struct {
+// Request contains the information of a validation request
+type Request struct {
 	// Raw is the raw request object
 	Raw []byte
 	// Name is the name of the object
@@ -54,8 +53,8 @@ type MutateRequest struct {
 	APIClient kubernetes.Interface
 }
 
-// MutatingWebhookFunc is the function that runs the mutating webhook logic
-type MutatingWebhookFunc func(request *MutateRequest) ([]byte, error)
+// WebhookFunc is the generic function type that runs either a validating or mutating webhook logic
+type WebhookFunc func(request *Request) *admiv1.AdmissionResponse
 
 // Server TODO <container-integrations>
 type Server struct {
@@ -90,11 +89,11 @@ func (s *Server) initDecoder() {
 	s.decoder = serializer.NewCodecFactory(scheme).UniversalDeserializer()
 }
 
-// Register adds an admission webhook handler.
-// Register must be called to register the desired webhook handlers before calling Run.
-func (s *Server) Register(uri string, webhookName string, f MutatingWebhookFunc, dc dynamic.Interface, apiClient kubernetes.Interface) {
+// RegisterWebhook adds a Validating admission webhook handler.
+// It must be called to register the desired webhook handlers before calling Run.
+func (s *Server) RegisterWebhook(uri string, webhookName string, webhookType admicommon.WebhookType, f WebhookFunc, dc dynamic.Interface, apiClient kubernetes.Interface) {
 	s.mux.HandleFunc(uri, func(w http.ResponseWriter, r *http.Request) {
-		s.mutateHandler(w, r, webhookName, f, dc, apiClient)
+		s.Handle(w, r, webhookName, webhookType, f, dc, apiClient)
 	})
 }
 
@@ -134,22 +133,32 @@ func (s *Server) Run(mainCtx context.Context, client kubernetes.Interface) error
 	return server.Shutdown(shutdownCtx)
 }
 
-// mutateHandler contains the main logic responsible for handling mutation requests.
+// Handle contains the main logic responsible for handling admission requests.
 // It supports both v1 and v1beta1 requests.
-func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookName string, mutateFunc MutatingWebhookFunc, dc dynamic.Interface, apiClient kubernetes.Interface) {
-	metrics.MutatingWebhooksReceived.Inc(webhookName)
+func (s *Server) Handle(w http.ResponseWriter, r *http.Request, webhookName string, webhookType admicommon.WebhookType, webhookFunc WebhookFunc, dc dynamic.Interface, apiClient kubernetes.Interface) {
+	// Increment the metrics for the received webhook
+	if webhookType == admicommon.ValidatingWebhook {
+		metrics.ValidatingWebhooksReceived.Inc(webhookName)
+	} else if webhookType == admicommon.MutatingWebhook {
+		metrics.MutatingWebhooksReceived.Inc(webhookName)
+	}
 
+	// Measure the time it takes to process the request
 	start := time.Now()
 	defer func() {
-		metrics.MutatingWebhooksResponseDuration.Observe(time.Since(start).Seconds(), webhookName)
+		if webhookType == admicommon.ValidatingWebhook {
+			metrics.ValidatingWebhooksResponseDuration.Observe(time.Since(start).Seconds(), webhookName)
+		} else if webhookType == admicommon.MutatingWebhook {
+			metrics.MutatingWebhooksResponseDuration.Observe(time.Since(start).Seconds(), webhookName)
+		}
 	}()
 
+	// Validate admission request
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		log.Warnf("Invalid method %s, only POST requests are allowed", r.Method)
 		return
 	}
-
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -157,13 +166,13 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 		return
 	}
 	defer r.Body.Close()
-
 	if contentType := r.Header.Get("Content-Type"); contentType != jsonContentType {
 		w.WriteHeader(http.StatusBadRequest)
 		log.Warnf("Unsupported content type %s, only %s is supported", contentType, jsonContentType)
 		return
 	}
 
+	// Deserialize admission request
 	obj, gvk, err := s.decoder.Decode(body, nil, nil)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -171,6 +180,7 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 		return
 	}
 
+	// Handle the request based on GroupVersionKind
 	var response runtime.Object
 	switch *gvk {
 	case admiv1.SchemeGroupVersion.WithKind("AdmissionReview"):
@@ -180,7 +190,7 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 		}
 		admissionReviewResp := &admiv1.AdmissionReview{}
 		admissionReviewResp.SetGroupVersionKind(*gvk)
-		mutateRequest := MutateRequest{
+		admissionRequest := Request{
 			Raw:           admissionReviewReq.Request.Object.Raw,
 			Name:          admissionReviewReq.Request.Name,
 			Namespace:     admissionReviewReq.Request.Namespace,
@@ -188,8 +198,18 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 			DynamicClient: dc,
 			APIClient:     apiClient,
 		}
-		jsonPatch, err := mutateFunc(&mutateRequest)
-		admissionReviewResp.Response = mutationResponse(jsonPatch, err)
+
+		// Generate admission response
+		if webhookType == admicommon.ValidatingWebhook {
+			validation := webhookFunc(&admissionRequest)
+			admissionReviewResp.Response = validation
+		} else if webhookType == admicommon.MutatingWebhook {
+			mutationResponse := webhookFunc(&admissionRequest)
+			admissionReviewResp.Response = mutationResponse
+		} else {
+			log.Errorf("Invalid webhook type %v", webhookType)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		admissionReviewResp.Response.UID = admissionReviewReq.Request.UID
 		response = admissionReviewResp
 	case admiv1beta1.SchemeGroupVersion.WithKind("AdmissionReview"):
@@ -199,7 +219,7 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 		}
 		admissionReviewResp := &admiv1beta1.AdmissionReview{}
 		admissionReviewResp.SetGroupVersionKind(*gvk)
-		mutateRequest := MutateRequest{
+		admissionRequest := Request{
 			Raw:           admissionReviewReq.Request.Object.Raw,
 			Name:          admissionReviewReq.Request.Name,
 			Namespace:     admissionReviewReq.Request.Namespace,
@@ -207,8 +227,18 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 			DynamicClient: dc,
 			APIClient:     apiClient,
 		}
-		jsonPatch, err := mutateFunc(&mutateRequest)
-		admissionReviewResp.Response = responseV1ToV1beta1(mutationResponse(jsonPatch, err))
+
+		// Generate admission response
+		if webhookType == admicommon.ValidatingWebhook {
+			validation := webhookFunc(&admissionRequest)
+			admissionReviewResp.Response = responseV1ToV1beta1(validation)
+		} else if webhookType == admicommon.MutatingWebhook {
+			mutationResponse := webhookFunc(&admissionRequest)
+			admissionReviewResp.Response = responseV1ToV1beta1(mutationResponse)
+		} else {
+			log.Errorf("Invalid webhook type %v", webhookType)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
 		admissionReviewResp.Response.UID = admissionReviewReq.Request.UID
 		response = admissionReviewResp
 	default:
@@ -223,29 +253,6 @@ func (s *Server) mutateHandler(w http.ResponseWriter, r *http.Request, webhookNa
 		log.Warnf("Failed to encode the response: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		return
-	}
-}
-
-// mutationResponse returns the adequate v1.AdmissionResponse based on the mutation result.
-func mutationResponse(jsonPatch []byte, err error) *admiv1.AdmissionResponse {
-	if err != nil {
-		log.Warnf("Failed to mutate: %v", err)
-
-		return &admiv1.AdmissionResponse{
-			Result: &metav1.Status{
-				Message: err.Error(),
-			},
-			Allowed: true,
-		}
-
-	}
-
-	patchType := admiv1.PatchTypeJSONPatch
-
-	return &admiv1.AdmissionResponse{
-		Patch:     jsonPatch,
-		PatchType: &patchType,
-		Allowed:   true,
 	}
 }
 
