@@ -18,10 +18,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/DataDog/datadog-agent/pkg/config"
+	configmock "github.com/DataDog/datadog-agent/pkg/config/mock"
 )
 
 func TestEventMonitor(t *testing.T) {
-	config.MockSystemProbe(t)
+	configmock.NewSystemProbe(t)
 
 	for i, tc := range []struct {
 		cws, fim, processEvents, networkEvents bool

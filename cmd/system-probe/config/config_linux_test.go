@@ -15,10 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/DataDog/datadog-agent/pkg/config"
+	configmock "github.com/DataDog/datadog-agent/pkg/config/mock"
 )
 
 func TestNetworkProcessEventMonitoring(t *testing.T) {
-	config.MockSystemProbe(t)
+	configmock.NewSystemProbe(t)
 
 	for i, te := range []struct {
 		network, netProcEvents bool
@@ -44,7 +45,7 @@ func TestNetworkProcessEventMonitoring(t *testing.T) {
 }
 
 func TestDynamicInstrumentation(t *testing.T) {
-	config.MockSystemProbe(t)
+	configmock.NewSystemProbe(t)
 	os.Setenv("DD_DYNAMIC_INSTRUMENTATION_ENABLED", "true")
 	defer os.Unsetenv("DD_DYNAMIC_INSTRUMENTATION_ENABLED")
 
@@ -87,7 +88,7 @@ func TestNPMEnabled(t *testing.T) {
 		{true, true, true, true},
 	}
 
-	config.MockSystemProbe(t)
+	configmock.NewSystemProbe(t)
 	for _, te := range tests {
 		t.Run("", func(t *testing.T) {
 			t.Setenv("DD_SYSTEM_PROBE_NETWORK_ENABLED", strconv.FormatBool(te.npm))
