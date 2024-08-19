@@ -6,12 +6,13 @@
 package rdnsquerierimpl
 
 import (
+	"bytes"
 	"testing"
 	"time"
 
-	pkgconfigsetup "github.com/DataDog/datadog-agent/pkg/config/setup"
-
+	"github.com/DataDog/datadog-agent/pkg/config/mock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestConfig(t *testing.T) {
@@ -277,7 +278,11 @@ reverse_dns_enrichment:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mockConfig := pkgconfigsetup.ConfFromYAML(tt.configYaml)
+			mockConfig := mock.New(t)
+			mockConfig.SetConfigType("yaml")
+			err := mockConfig.ReadConfig(bytes.NewBuffer([]byte(tt.configYaml)))
+			require.NoError(t, err)
+
 			testConfig := newConfig(mockConfig)
 			assert.Equal(t, tt.expectedConfig, *testConfig)
 		})
