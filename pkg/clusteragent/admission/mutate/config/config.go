@@ -241,6 +241,10 @@ func injectExternalDataEnvVar(pod *corev1.Pod) (injected bool) {
 			_ = log.Errorf("Cannot inject identity into nil container")
 			continue
 		}
+		if common.Contains(containerInjection.container.Env, ddExternalDataEnvVarName) {
+			_ = log.Errorf("Ignoring container %q in pod %q: env var %q already exists", containerInjection.container.Name, common.PodString(pod), ddExternalDataEnvVarName)
+			continue
+		}
 
 		containerInjection.container.Env = append([]corev1.EnvVar{
 			{

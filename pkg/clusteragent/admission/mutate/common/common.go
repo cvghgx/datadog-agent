@@ -54,8 +54,8 @@ func Mutate(rawPod []byte, ns string, mutationType string, m MutationFunc, dc dy
 	return json.Marshal(patch)
 }
 
-// contains returns whether EnvVar slice contains an env var with a given name
-func contains(envs []corev1.EnvVar, name string) bool {
+// Contains returns whether EnvVar slice contains an env var with a given name
+func Contains(envs []corev1.EnvVar, name string) bool {
 	for _, env := range envs {
 		if env.Name == name {
 			return true
@@ -70,7 +70,7 @@ func InjectEnv(pod *corev1.Pod, env corev1.EnvVar) bool {
 	podStr := PodString(pod)
 	log.Debugf("Injecting env var '%s' into pod %s", env.Name, podStr)
 	for i, ctr := range pod.Spec.Containers {
-		if contains(ctr.Env, env.Name) {
+		if Contains(ctr.Env, env.Name) {
 			log.Debugf("Ignoring container '%s' in pod %s: env var '%s' already exist", ctr.Name, podStr, env.Name)
 			continue
 		}
@@ -80,7 +80,7 @@ func InjectEnv(pod *corev1.Pod, env corev1.EnvVar) bool {
 		injected = true
 	}
 	for i, ctr := range pod.Spec.InitContainers {
-		if contains(ctr.Env, env.Name) {
+		if Contains(ctr.Env, env.Name) {
 			log.Debugf("Ignoring init container '%s' in pod %s: env var '%s' already exist", ctr.Name, podStr, env.Name)
 			continue
 		}
