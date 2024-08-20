@@ -39,14 +39,24 @@ func NewModule(config *Config) (*Module, error) {
 
 //nolint:revive // TODO(DEBUG) Fix revive linter
 func (m *Module) Close() {
-	log.Info("Closing user tracer module")
+	if m.godi == nil {
+		log.Info("Could not close dynamic instrumentation module, already closed")
+		return
+	}
+	log.Info("Closing dynamic instrumentation module")
 	m.godi.Close()
 }
 
 //nolint:revive // TODO(DEBUG) Fix revive linter
 func (m *Module) GetStats() map[string]interface{} {
-	m.godi.GetStats()
+	if m == nil || m.godi == nil {
+		log.Info("Could not get stats from dynamic instrumentation module, closed")
+		return map[string]interface{}{}
+	}
 	debug := map[string]interface{}{}
+	stats := m.godi.GetStats()
+	debug["PIDEventsCreated"] = stats.PIDEventsCreatedCount
+	debug["ProbeEventsCreated"] = stats.ProbeEventsCreatedCount
 	return debug
 }
 
